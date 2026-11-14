@@ -1,4 +1,4 @@
-import { requireUser, resolveProviderKeys } from './_auth.js';
+import { requireUser, resolveProviderKeys, isSubscriber } from './_auth.js';
 
 // OpenAI TTS voice mapping per persona (spread across 6 voices by gender)
 const OPENAI_VOICES = {
@@ -132,8 +132,19 @@ export default async function handler(req, res) {
 
     const openaiVoice = OPENAI_VOICES[persona_id] || { voice: 'onyx', speed: 1.0 };
 
+    // Premium voices are a paid tier. The client may *ask*, but only an active
+    // subscription unlocks ElevenLabs — otherwise anyone could skip the upsell
+    // and spend the owner's ElevenLabs balance by flipping a request flag.
+    const premiumAllowed = use_premium_voices ? await isSubscriber(user.id) : false;
+    if (use_premium_voices && !premiumAllowed) {
+      return res.status(403).json({
+        error: 'Premium voices require an active subscription',
+        code: 'premium_voices_locked',
+      });
+    }
+
     // Try ElevenLabs if premium voices requested and key available
-    if (use_premium_voices && elevenlabsKey) {
+    if (premiumAllowed && elevenlabsKey) {
       const elevenVoiceId = ELEVENLABS_VOICES[persona_id] || 'pNInz6obpgDQGcFmaJgB';
       try {
         const audio = await generateElevenLabsTTS(elevenlabsKey, text, elevenVoiceId, openaiVoice.speed);

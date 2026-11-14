@@ -93,6 +93,27 @@ test('provider keys are resolved per user, not straight from process.env', async
   }
 });
 
+test('premium voices are entitlement-checked, not client-asserted', async () => {
+  const source = await api('tts.js');
+  assert.match(
+    source,
+    /isSubscriber\(user\.id\)/,
+    'tts must resolve the subscription server-side'
+  );
+  const check = source.indexOf('isSubscriber(user.id)');
+  // lastIndexOf: the first hit is the function *definition*, not the call.
+  const synth = source.lastIndexOf('generateElevenLabsTTS(');
+  assert.ok(
+    check > -1 && synth > check,
+    'entitlement must be checked before any ElevenLabs call'
+  );
+  assert.match(
+    source,
+    /premium_voices_locked/,
+    'locked premium voices should return a distinguishable error'
+  );
+});
+
 test('the shipping bundle carries no arena instrumentation', async () => {
   const html = await readFile(resolve(here, '..', 'index.html'), 'utf8');
   assert.doesNotMatch(html, /data-arena-recording/, 'leftover session recorder');

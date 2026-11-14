@@ -56,6 +56,23 @@ export async function requireAdmin(req) {
 }
 
 /**
+ * Is the caller a paying subscriber (and therefore entitled to premium voices)?
+ *
+ * `api/tts.js` used to hand out ElevenLabs synthesis to anyone who sent
+ * `use_premium_voices: true`, whether or not they had paid for the tier the UI
+ * gates behind a subscription. Entitlement is decided here, server-side, and
+ * the client only gets to *ask*.
+ */
+export async function isSubscriber(userId) {
+  const { data } = await supabase
+    .from('profiles')
+    .select('subscription_tier')
+    .eq('user_id', userId)
+    .maybeSingle();
+  return !!data?.subscription_tier;
+}
+
+/**
  * Which API keys to use for a request, in priority order:
  *   1. the caller's own BYOK key
  *   2. the global key (global_settings row, then process.env)
