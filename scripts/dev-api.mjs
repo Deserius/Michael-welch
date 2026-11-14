@@ -10,7 +10,7 @@
 import { createServer } from 'node:http';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFile, access } from 'node:fs/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -31,18 +31,41 @@ try {
 }
 
 const modules = new Map();
+// name -> error, for modules that exist on disk but fail to import.
+const broken = new Map();
 
 async function loadHandler(name) {
   if (!/^[a-z0-9-]+$/.test(name)) return null;
   const file = resolve(API_DIR, `${name}.js`);
+
+  // Distinguish "no such route" from "the file is there but won't import".
+  try {
+    await access(file);
+  } catch {
+    return null;
+  }
+
   try {
     // Cache-bust so edits are picked up without a restart.
+    //
+    // This only busts THIS module. Its dependencies (_auth.js, _db-client.js,
+    // …) resolve from the process's module cache, so a handler that starts
+    // using a newly added export while the old version is cached dies with
+    // `does not provide an export named` until the process restarts. That
+    // surfaces as a confusing 404, which is why load failures are recorded and
+    // reported as 500s below.
     const url = `${pathToFileURL(file).href}?v=${Date.now()}`;
     const mod = await import(url);
     modules.set(name, mod.default);
+    broken.delete(name);
     return mod.default;
   } catch (err) {
     console.error(`[api] failed to load ${name}:`, err.message);
+    if (err.message?.includes('does not provide an export named')) {
+      console.error('[api] stale module graph — restart `npm run dev` to pick it up.');
+    }
+    broken.set(name, err);
+    modules.delete(name);
     return null;
   }
 }
@@ -92,7 +115,17 @@ const server = createServer(async (req, res) => {
   }
 
   const handler = modules.get(name) || (await loadHandler(name));
-  if (!handler) return res.status(404).json({ error: `Unknown API route: ${name}` });
+  if (!handler) {
+    const failure = broken.get(name);
+    if (failure) {
+      // The file exists; it just won't import. Say so instead of 404ing.
+      return res.status(500).json({
+        error: `Failed to load api/${name}.js: ${failure.message}`,
+        hint: 'If this mentions a missing export, restart `npm run dev`.',
+      });
+    }
+    return res.status(404).json({ error: `Unknown API route: ${name}` });
+  }
 
   try {
     req.body = await readBody(req);
