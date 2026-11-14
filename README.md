@@ -130,6 +130,22 @@ npm test
 `vercel.json` rewrites all non-`/api` routes to `index.html` so client-side
 routing works on refresh.
 
+### Notes from deploying this repo to Vercel
+
+- **Framework preset must be `vite`** with build `npm run build`, install
+  `npm ci` and output `dist`. Left on "Other", Vercel serves the unbuilt source.
+- **The Hobby plan caps a deployment at 12 serverless functions.** Shared
+  modules in `api/` are therefore underscore-prefixed (`_auth.js`,
+  `_pricing.js`, …) so Vercel bundles them as dependencies instead of routing
+  them. Adding a 13th non-underscore file fails the build with
+  `exceeded_serverless_functions_per_deployment`.
+- **Deployment Protection (Vercel Authentication) intercepts every URL**,
+  including `/api/*`, when the project has `ssoProtection` set. Public API
+  clients get Vercel's login page instead of JSON. Turn it off under
+  *Settings → Deployment Protection* before handing the URL to anyone.
+- A `git`-sourced deploy needs the **numeric** repo id (`1448765318` for
+  `Deserius/Michael-welch`), not `owner/name`.
+
 > If you deploy the Supabase project for the first time, `mailer_autoconfirm`
 > must be on — or SMTP configured — otherwise nobody can finish signing up.
 > Supabase's shared SMTP is rate-limited and unsuitable for production.
