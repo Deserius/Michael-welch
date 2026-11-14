@@ -111,6 +111,8 @@ create table if not exists public.global_settings (
   updated_at     timestamptz not null default now()
 );
 
+-- Trigger helper. Not a public API: revoke the default PUBLIC EXECUTE so it
+-- can only ever run from the trigger's own context.
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -140,6 +142,8 @@ drop trigger if exists global_settings_touch_updated_at on public.global_setting
 create trigger global_settings_touch_updated_at
   before update on public.global_settings
   for each row execute function public.touch_updated_at();
+
+revoke all on function public.touch_updated_at() from public, anon, authenticated;
 
 -- =============================================================================
 -- Row Level Security

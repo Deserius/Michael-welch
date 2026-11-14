@@ -83,7 +83,15 @@ end;
 $$;
 
 -- These are service-role entry points: never callable from the browser.
-revoke all on function public.spend_credits(uuid, integer, text)  from anon, authenticated;
-revoke all on function public.grant_credits(uuid, integer, text, text) from anon, authenticated;
+--
+-- Revoking from anon/authenticated alone is NOT enough. Postgres grants
+-- EXECUTE to PUBLIC by default on every new function, and anon/authenticated
+-- inherit from PUBLIC, so `revoke ... from anon, authenticated` leaves both
+-- able to call it. Verified against the live database: with only that revoke,
+-- `has_function_privilege('anon', 'grant_credits(uuid,integer,text,text)',
+-- 'EXECUTE')` still returned true -- i.e. anyone holding the public anon key
+-- could mint themselves unlimited credits or drain another user's balance.
+revoke all on function public.spend_credits(uuid, integer, text)  from public, anon, authenticated;
+revoke all on function public.grant_credits(uuid, integer, text, text) from public, anon, authenticated;
 grant execute on function public.spend_credits(uuid, integer, text)  to service_role;
 grant execute on function public.grant_credits(uuid, integer, text, text) to service_role;
