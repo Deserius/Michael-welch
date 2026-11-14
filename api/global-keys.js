@@ -21,21 +21,24 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       const { data } = await supabase
         .from('global_settings')
-        .select('openai_key, elevenlabs_key')
+        .select('openai_key, elevenlabs_key, openrouter_key')
         .eq('id', 1)
         .maybeSingle();
 
       return res.status(200).json({
         has_openai: !!(data?.openai_key || process.env.OPENAI_API_KEY),
         has_elevenlabs: !!(data?.elevenlabs_key || process.env.ELEVENLABS_API_KEY),
+        has_openrouter: !!(data?.openrouter_key || process.env.OPENROUTER_API_KEY),
         source: data?.openai_key ? 'database' : 'env',
       });
     }
 
     if (req.method === 'POST') {
-      const { openai_key, elevenlabs_key } = req.body || {};
-      if (!openai_key && !elevenlabs_key) {
-        return res.status(400).json({ error: 'Provide openai_key and/or elevenlabs_key' });
+      const { openai_key, elevenlabs_key, openrouter_key } = req.body || {};
+      if (!openai_key && !elevenlabs_key && !openrouter_key) {
+        return res
+          .status(400)
+          .json({ error: 'Provide openai_key, elevenlabs_key and/or openrouter_key' });
       }
 
       // Only overwrite the fields that were supplied; `undefined` would
@@ -43,6 +46,7 @@ export default async function handler(req, res) {
       const patch = { id: 1, updated_by: auth.user.id };
       if (openai_key) patch.openai_key = openai_key;
       if (elevenlabs_key) patch.elevenlabs_key = elevenlabs_key;
+      if (openrouter_key) patch.openrouter_key = openrouter_key;
 
       const { error } = await supabase.from('global_settings').upsert(patch);
       if (error) throw error;
