@@ -35,7 +35,11 @@ const modules = new Map();
 const broken = new Map();
 
 async function loadHandler(name) {
-  if (!/^[a-z0-9-]+$/.test(name)) return null;
+  // Allow the catch-all's bracket notation as well as plain route names.
+  // Allow the catch-all's bracket notation as well as plain route names.
+  const plain = /^[a-z0-9-]+$/.test(name);
+  const catchAll = /^\[\.\.\.path\]$/.test(name);
+  if (!plain && !catchAll) return null;
   const file = resolve(API_DIR, `${name}.js`);
 
   // Distinguish "no such route" from "the file is there but won't import".
@@ -108,19 +112,41 @@ const server = createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   const url = augment(req, res);
-  const name = url.pathname.replace(/^\/api\/?/, '').split('/')[0];
+  const segments = url.pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean);
+  const name = segments[0];
 
   if (!url.pathname.startsWith('/api/') || !name) {
     return res.status(404).json({ error: 'Not an API route' });
   }
 
-  const handler = modules.get(name) || (await loadHandler(name));
+  // Mirror the vercel.json rewrite: nested routes (/api/auth/me) and any path
+  // with no dedicated file belong to the catch-all router (api/[...path].js).
+  // A single segment with its own file keeps the classic one-file-per-route
+  // behaviour. Checking the filesystem here avoids a stale 404 when the
+  // catch-all owns a route that merely looks flat (e.g. /api/roasters).
+  //
+  // Routes owned by the catch-all even though they look flat: the bundle that
+  // now fronts this app expects its own response shapes there, so the legacy
+  // single-file handlers must not shadow them.
+  const CATCH_ALL_OWNED = new Set(['personas']);
+  let catchAll =
+    segments.length > 1 || CATCH_ALL_OWNED.has(name) ? '[...path]' : null;
+  if (!catchAll) {
+    try {
+      await access(resolve(API_DIR, `${name}.js`));
+    } catch {
+      catchAll = '[...path]';
+    }
+  }
+
+  const routeName = catchAll || name;
+  const handler = modules.get(routeName) || (await loadHandler(routeName));
   if (!handler) {
-    const failure = broken.get(name);
+    const failure = broken.get(routeName);
     if (failure) {
       // The file exists; it just won't import. Say so instead of 404ing.
       return res.status(500).json({
-        error: `Failed to load api/${name}.js: ${failure.message}`,
+        error: `Failed to load api/${routeName}.js: ${failure.message}`,
         hint: 'If this mentions a missing export, restart `npm run dev`.',
       });
     }
@@ -131,7 +157,7 @@ const server = createServer(async (req, res) => {
     req.body = await readBody(req);
     await handler(req, res);
   } catch (err) {
-    console.error(`[api] ${name} threw:`, err);
+    console.error(`[api] ${routeName} threw:`, err);
     if (!res.headersSent) res.status(500).json({ error: err.message });
     else res.end();
   }

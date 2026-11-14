@@ -41,3 +41,4 @@ coverage/
 Thumbs.db
 
 *.log
+target-preview/
