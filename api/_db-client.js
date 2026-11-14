@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { triggerRestore } from './db-wake.js';
+import { triggerRestore } from './_db-wake.js';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,

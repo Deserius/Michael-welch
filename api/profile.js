@@ -1,4 +1,4 @@
-import supabase from './db-client.js';
+import supabase from './_db-client.js';
 import { requireUser } from './_auth.js';
 
 export default async function handler(req, res) {

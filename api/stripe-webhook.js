@@ -1,4 +1,4 @@
-import supabase from './db-client.js';
+import supabase from './_db-client.js';
 import Stripe from 'stripe';
 
 const STRIPE_KEY = process.env.STRIPE_API_KEY || '';

@@ -1,5 +1,5 @@
-import supabase from './db-client.js';
-import { getPersonasByIds } from './personas-data.js';
+import supabase from './_db-client.js';
+import { getPersonasByIds } from './_personas-data.js';
 import { requireUser, resolveProviderKeys } from './_auth.js';
 import { calcRoastCost, clampDuration, clampIntensity, linesPerPersona } from './_pricing.js';
 

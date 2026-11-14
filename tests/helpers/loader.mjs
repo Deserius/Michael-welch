@@ -11,7 +11,7 @@ const PROXY = pathToFileURL(resolvePath(here, 'db-proxy.mjs')).href;
 
 export async function resolve(specifier, context, nextResolve) {
   const fromApi = Boolean(context.parentURL && /\/api\/[^/]+\.js$/.test(context.parentURL));
-  if (fromApi && specifier === './db-client.js') {
+  if (fromApi && (specifier === './db-client.js' || specifier === './_db-client.js')) {
     return { url: PROXY, shortCircuit: true };
   }
   return nextResolve(specifier, context);

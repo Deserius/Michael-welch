@@ -1,4 +1,4 @@
-import supabase from './db-client.js';
+import supabase from './_db-client.js';
 
 /**
  * Resolve the caller from a Supabase access token.

@@ -137,10 +137,13 @@ routing works on refresh.
 ## Project layout
 
 ```
-api/                 Vercel serverless functions
+api/                 Vercel serverless functions (10 routes — Hobby plan cap is 12)
   _auth.js           requireUser / requireAdmin / resolveProviderKeys
   _pricing.js        single source of truth for credit pricing
-  db-client.js       service-role Supabase client
+  _db-client.js      service-role Supabase client
+  _db-wake.js        restore helper for paused projects
+  _personas-data.js  the 30 persona definitions
+  (files prefixed with _ are shared modules, not routes)
   roast.js           generate + list roasts (atomic credit spend)
   credits.js         packs, subscriptions, ledger
   payment-status.js  Stripe polling (idempotent grant)
