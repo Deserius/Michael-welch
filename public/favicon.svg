@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Da RoastBox">
+  <rect width="64" height="64" rx="14" fill="#050505" />
+  <path d="M32 11c-3 6-9 8-9 15a9 9 0 0 0 18 0c0-7-6-9-9-15z" fill="#ff4d1a" />
+  <path d="M32 24c-1.4 3-4.2 4-4.2 7a4.2 4.2 0 0 0 8.4 0c0-3-2.8-4-4.2-7z" fill="#ffd166" />
+  <path d="M14 44h36v4a5 5 0 0 1-5 5H19a5 5 0 0 1-5-5z" fill="#ff4d1a" opacity=".9" />
+  <rect x="14" y="40" width="36" height="4" rx="2" fill="#ffd166" />
+</svg>
