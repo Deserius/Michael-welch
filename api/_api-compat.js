@@ -14,6 +14,11 @@
  * mirrored into an httpOnly cookie so a reload can recover the session.
  */
 import supabase from './_db-client.js';
+import {
+  supabaseReachable,
+  userFromToken,
+  profileFor,
+} from './_local-store.js';
 
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -55,6 +60,13 @@ export function bearer(req) {
 export async function resolveUser(req) {
   const token = bearer(req) || readCookie(req, 'roastbox_session');
   if (!token) return { error: 'Unauthorized', status: 401 };
+
+  // Offline / preview mode: the token came from the local store instead.
+  if (!(await supabaseReachable())) {
+    const local = await userFromToken(token);
+    if (!local) return { error: 'Unauthorized', status: 401 };
+    return { user: { id: local.id, email: local.email }, profile: profileFor(local), token, local };
+  }
 
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data?.user) return { error: 'Unauthorized', status: 401 };

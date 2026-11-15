@@ -12,6 +12,19 @@
 import supabase from './_db-client.js';
 import { PERSONAS } from './_personas-data.js';
 import { resolveUser, shapeUser, begin } from './_api-compat.js';
+import { localTranscript } from './_local-ai.js';
+import {
+  supabaseReachable,
+  createUser,
+  authenticate,
+  issueSession,
+  spendCredits,
+  addRoast,
+  listRoasts,
+  saveByok,
+  getByok,
+  clearByok,
+} from './_local-store.js';
 import { calcRoastCost } from './_pricing.js';
 import {
   resolveKeys,
@@ -96,6 +109,13 @@ async function loginWithEmail(body) {
   const password = String(body?.password || '');
   if (!email || !password) return { status: 400, body: { error: 'Email and password required' } };
 
+  // Offline / preview mode.
+  if (!(await supabaseReachable())) {
+    const user = await authenticate({ email, password });
+    if (!user) return { status: 401, body: { error: 'Invalid email or password' } };
+    return { status: 200, body: { session_token: issueSession(user) } };
+  }
+
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
     if (/fetch failed|ECONN|ENOTFOUND|socket/i.test(error.message || '')) {
@@ -127,6 +147,21 @@ async function registerWithEmail(body) {
     typeof body?.password === 'string' && body.password.length >= 6
       ? body.password
       : crypto.randomUUID().replace(/-/g, '') + 'Aa1!';
+
+  // Offline / preview mode: create the account locally and sign in at once.
+  if (!(await supabaseReachable())) {
+    if (/\.invalid$/.test(email)) {
+      return { status: 400, body: { error: 'Enter a valid email address' } };
+    }
+    const created = await createUser({ email, password });
+    if (created.exists) {
+      return { status: 200, body: { message: 'If that address can be used, check your email.' } };
+    }
+    return {
+      status: 200,
+      body: { message: 'Account created.', session_token: issueSession(created.user) },
+    };
+  }
 
   const { data, error } = await supabase.auth.admin.createUser({
     email,
@@ -344,13 +379,24 @@ async function generateRoast(body, user, profile) {
     };
   }
 
-  const keys = await resolveKeys(user.id);
+  const online = await supabaseReachable();
+  const keys = online
+    ? await resolveKeys(user.id)
+    : { openaiKey: '', elevenlabsKey: '', openrouterKey: '', textProvider: 'local' };
 
   // Write the transcript before charging, so a provider outage costs nothing.
   let segments;
   let textProvider = keys.textProvider;
   const lineCount = battle ? 8 : Math.max(3, chosen.length * 2);
   const tier = body?.roast_tier === 'premium' ? 'premium' : 'free';
+  const isLocalUser = user.id.startsWith('local_');
+
+  // Offline, or no provider key: use the local engine. Still a real, varied
+  // transcript, just authored on this machine rather than by a model.
+  if (isLocalUser || !online || keys.textProvider === 'local') {
+    segments = localTranscript({ chosen, subject, battle, battleStyle, lineCount });
+    textProvider = 'local';
+  } else {
 
   try {
     const ai = await aiTranscript({
@@ -392,38 +438,62 @@ async function generateRoast(body, user, profile) {
     });
   }
 
-  const speech = await attachSpeech({ keys, segments, chosen, premiumVoice: voiceAllowed });
+  }
+
+  // Speech needs the network; skip it entirely when offline.
+  const speech = online
+    ? await attachSpeech({ keys, segments, chosen, premiumVoice: voiceAllowed })
+    : { provider: 'none', fellBack: false };
 
   // Charge atomically; the RPC raises if the balance moved underneath us.
   let remaining = profile?.credits ?? 0;
   if (cost > 0) {
-    const { data, error } = await supabase.rpc('spend_credits', {
-      p_user_id: user.id,
-      p_amount: cost,
-      p_description: battle ? `Battle: ${subject}` : `Roast: ${subject}`,
-    });
-    if (error) {
-      const insufficient = /insufficient_credits/.test(error.message || '');
-      return {
-        status: insufficient ? 402 : 500,
-        body: { error: insufficient ? 'Insufficient credits' : 'Could not charge credits' },
-      };
+    if (isLocalUser) {
+      const res = await spendCredits(user.id, cost);
+      if (res.error) {
+        return { status: 402, body: { error: 'Insufficient credits' } };
+      }
+      remaining = res.credits;
+    } else {
+      const { data, error } = await supabase.rpc('spend_credits', {
+        p_user_id: user.id,
+        p_amount: cost,
+        p_description: battle ? `Battle: ${subject}` : `Roast: ${subject}`,
+      });
+      if (error) {
+        const insufficient = /insufficient_credits/.test(error.message || '');
+        return {
+          status: insufficient ? 402 : 500,
+          body: { error: insufficient ? 'Insufficient credits' : 'Could not charge credits' },
+        };
+      }
+      remaining = data;
     }
-    remaining = data;
   }
 
   const personaIds = chosen.map((p) => p.id);
-  const { data: saved } = await supabase
-    .from('roasts')
-    .insert({
-      user_id: user.id,
-      subject_name: subject,
-      persona_ids: personaIds,
+  let saved;
+  if (isLocalUser) {
+    saved = await addRoast({
+      userId: user.id,
+      subject,
+      personaIds,
       transcript: segments,
-      duration_min: Math.max(1, Math.round((body?.duration_sec || 30) / 60)),
-    })
-    .select('id')
-    .maybeSingle();
+    });
+  } else {
+    const { data } = await supabase
+      .from('roasts')
+      .insert({
+        user_id: user.id,
+        subject_name: subject,
+        persona_ids: personaIds,
+        transcript: segments,
+        duration_min: Math.max(1, Math.round((body?.duration_sec || 30) / 60)),
+      })
+      .select('id')
+      .maybeSingle();
+    saved = data;
+  }
 
   return {
     status: 200,
@@ -600,6 +670,23 @@ const ROUTES = {
 
   'GET /roast/history': async (_req, _res, { user }) => {
     if (!user) return { status: 401, body: { error: 'Unauthorized' } };
+
+    if (user.id.startsWith('local_')) {
+      const rows = await listRoasts(user.id);
+      return {
+        status: 200,
+        body: {
+          history: rows.map((r) => ({
+            id: r.id,
+            subject_name: r.subject_name,
+            persona_ids: r.persona_ids,
+            transcript: r.transcript,
+            created_at: r.created_at,
+          })),
+        },
+      };
+    }
+
     const { data } = await supabase
       .from('roasts')
       .select('id, subject_name, persona_ids, transcript, duration_min, created_at')
@@ -646,6 +733,10 @@ const ROUTES = {
     if (!Object.keys(patch).length) {
       return { status: 400, body: { error: 'No keys provided' } };
     }
+    if (user.id.startsWith('local_')) {
+      await saveByok(user.id, patch);
+      return { status: 200, body: { ok: true } };
+    }
     const { error } = await supabase
       .from('byok_keys')
       .upsert({ user_id: user.id, ...patch }, { onConflict: 'user_id' });
@@ -655,12 +746,27 @@ const ROUTES = {
 
   'DELETE /voice-settings/keys': async (_req, _res, { user }) => {
     if (!user) return { status: 401, body: { error: 'Unauthorized' } };
+    if (user.id.startsWith('local_')) {
+      await clearByok(user.id);
+      return { status: 200, body: { ok: true } };
+    }
     await supabase.from('byok_keys').delete().eq('user_id', user.id);
     return { status: 200, body: { ok: true } };
   },
 
   'GET /voice-settings': async (_req, _res, { user }) => {
     if (!user) return { status: 401, body: { error: 'Unauthorized' } };
+    if (user.id.startsWith('local_')) {
+      const row = await getByok(user.id);
+      return {
+        status: 200,
+        body: {
+          has_openai_key: !!row?.openai_key,
+          has_elevenlabs_key: !!row?.elevenlabs_key,
+          has_openrouter_key: !!row?.openrouter_key,
+        },
+      };
+    }
     const { data } = await supabase
       .from('byok_keys')
       .select('openai_key, elevenlabs_key, openrouter_key')
